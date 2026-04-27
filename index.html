@@ -1,26 +1,576 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Delta Projeleri | AGA</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FPS Mini Game</title>
     <style>
-        body { background-color: #050505; color: #00ff00; font-family: 'Courier New', monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .box { border: 1px solid #00ff00; padding: 20px; box-shadow: 0 0 15px #00ff00; text-align: center; }
-        .loading { overflow: hidden; border-right: .15em solid orange; white-space: nowrap; margin: 0 auto; letter-spacing: .15em; animation: typing 3.5s steps(40, end), blink-caret .75s step-end infinite; }
-        @keyframes typing { from { width: 0 } to { width: 100% } }
-        @keyframes blink-caret { from, to { border-color: transparent } 50% { border-color: orange; } }
-        a { color: #fff; text-decoration: none; border: 1px solid #fff; padding: 5px 10px; margin-top: 20px; display: inline-block; }
-        a:hover { background: #fff; color: #000; }
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #00ff00;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px black;
+        }
+        #hud {
+            position: absolute;
+            bottom: 20px; left: 20px;
+            color: white;
+            font-size: 20px;
+            text-shadow: 2px 2px 4px #000;
+        }
+        .hud-item { margin-bottom: 10px; font-weight: bold; }
+        .bar-container {
+            width: 200px; height: 15px; background: rgba(0,0,0,0.5); border: 2px solid white; margin-top: 5px;
+        }
+        #hp-bar { width: 100%; height: 100%; background: #ff0000; transition: width 0.2s; }
+        #ammo-text { color: #00ff00; }
+        #score-display {
+            position: absolute; top: 20px; right: 20px;
+            color: white; font-size: 24px; font-weight: bold; text-shadow: 2px 2px 4px #000;
+        }
+        #blocker {
+            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.7);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: white; pointer-events: auto; z-index: 10;
+        }
+        #instructions { font-size: 18px; text-align: center; line-height: 1.5; margin-bottom: 20px; }
+        #play-btn {
+            padding: 15px 30px; font-size: 20px; font-weight: bold; background: #00ff00; color: black;
+            border: none; cursor: pointer; transition: 0.2s;
+        }
+        #play-btn:hover { background: #00cc00; transform: scale(1.05); }
+        #game-over { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: red; font-size: 48px; font-weight: bold; text-shadow: 2px 2px 5px black; }
+        #damage-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,0,0,0.3); opacity: 0; transition: opacity 0.1s; pointer-events: none; }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h1 class="loading">DELTA ECLIPSE AI PROJECT</h1>
-        <p>Sistem Durumu: Çevrimiçi</p>
-        <p>Geliştirici: babacan32332-sudo</p>
-        <hr>
-        <p>Crossfire & Metin2 & Blood Strike</p>
-        <a href="#">YAKINDA BURADAYIZ AGA!</a>
+
+    <div id="ui-layer">
+        <div id="crosshair">+</div>
+        <div id="damage-overlay"></div>
+        <div id="hud">
+            <div class="hud-item">HP: <span id="hp-text">100</span>
+                <div class="bar-container"><div id="hp-bar"></div></div>
+            </div>
+            <div class="hud-item">Ammo: <span id="ammo-text">30 / 30</span> <span id="reload-text" style="color:yellow; font-size:14px; display:none;">(Reloading...)</span></div>
+        </div>
+        <div id="score-display">Score: <span id="score-val">0</span></div>
+        <div id="game-over">YOU DIED</div>
     </div>
+
+    <div id="blocker">
+        <h1>FPS SURVIVAL</h1>
+        <div id="instructions">
+            <b>WASD</b> - Move | <b>SPACE</b> - Jump | <b>SHIFT</b> - Sprint<br>
+            <b>LEFT CLICK</b> - Shoot | <b>R</b> - Reload<br><br>
+            Survive as long as you can!
+        </div>
+        <button id="play-btn">CLICK TO START</button>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        // --- GAME CONFIG & STATE ---
+        const config = {
+            playerSpeedWalk: 10,
+            playerSpeedSprint: 18,
+            jumpForce: 12,
+            gravity: 30,
+            playerHeight: 2,
+            maxHp: 100,
+            maxAmmo: 30,
+            fireRate: 0.1, // seconds
+            reloadTime: 1.5, // seconds
+            enemySpeed: 5,
+            enemyDamage: 15,
+            enemyAttackCooldown: 1.0,
+            mapSize: 100
+        };
+
+        const state = {
+            hp: config.maxHp,
+            ammo: config.maxAmmo,
+            score: 0,
+            isDead: false,
+            isReloading: false,
+            lastFireTime: 0,
+            canJump: true,
+            velocity: new THREE.Vector3(),
+            direction: new THREE.Vector3()
+        };
+
+        const keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+        const obstacles = []; // For collision
+        const enemies = [];
+        let scene, camera, renderer, controls, clock;
+        let weaponMesh, muzzleFlash;
+        let recoilTarget = 0, currentRecoil = 0;
+
+        // UI Elements
+        const uiHpBar = document.getElementById('hp-bar');
+        const uiHpText = document.getElementById('hp-text');
+        const uiAmmoText = document.getElementById('ammo-text');
+        const uiScoreVal = document.getElementById('score-val');
+        const uiReloadText = document.getElementById('reload-text');
+        const uiDamageOverlay = document.getElementById('damage-overlay');
+        const uiGameOver = document.getElementById('game-over');
+        const blocker = document.getElementById('blocker');
+        const playBtn = document.getElementById('play-btn');
+
+        // --- INITIALIZATION ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111122);
+            scene.fog = new THREE.Fog(0x111122, 10, config.mapSize * 0.8);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, config.playerHeight, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            clock = new THREE.Clock();
+            
+            setupLighting();
+            setupMap();
+            setupPlayer();
+            setupWeapon();
+
+            // Spawn initial enemies
+            for(let i=0; i<4; i++) spawnEnemy();
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousedown', onMouseDown);
+
+            // Pointer Lock Setup
+            controls = new PointerLockControls(camera, document.body);
+            playBtn.addEventListener('click', () => {
+                if(!state.isDead) controls.lock();
+            });
+            controls.addEventListener('lock', () => blocker.style.display = 'none');
+            controls.addEventListener('unlock', () => {
+                if(!state.isDead) blocker.style.display = 'flex';
+            });
+
+            updateUI();
+            animate();
+        }
+
+        // --- SCENE SETUP ---
+        function setupLighting() {
+            const ambient = new THREE.AmbientLight(0x404040, 1.5);
+            scene.add(ambient);
+            
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+            dirLight.position.set(20, 50, 20);
+            dirLight.castShadow = true;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            scene.add(dirLight);
+        }
+
+        function setupMap() {
+            // Floor
+            const floorGeo = new THREE.PlaneGeometry(config.mapSize, config.mapSize);
+            const floorMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.8 });
+            const floor = new THREE.Mesh(floorGeo, floorMat);
+            floor.rotation.x = -Math.PI / 2;
+            floor.receiveShadow = true;
+            scene.add(floor);
+
+            const wallMat = new THREE.MeshStandardMaterial({ color: 0x555555 });
+            const wallHeight = 10;
+            const t = 2; // thickness
+
+            // Outer Walls
+            createObstacle(0, wallHeight/2, -config.mapSize/2, config.mapSize, wallHeight, t, wallMat);
+            createObstacle(0, wallHeight/2, config.mapSize/2, config.mapSize, wallHeight, t, wallMat);
+            createObstacle(-config.mapSize/2, wallHeight/2, 0, t, wallHeight, config.mapSize, wallMat);
+            createObstacle(config.mapSize/2, wallHeight/2, 0, t, wallHeight, config.mapSize, wallMat);
+
+            // Inner Obstacles (Arena cover)
+            const boxMat = new THREE.MeshStandardMaterial({ color: 0x884422 });
+            for(let i=0; i<15; i++) {
+                let w = Math.random() * 4 + 2;
+                let d = Math.random() * 4 + 2;
+                let h = Math.random() * 4 + 3;
+                let x = (Math.random() - 0.5) * (config.mapSize - 20);
+                let z = (Math.random() - 0.5) * (config.mapSize - 20);
+                // Don't spawn on player (center)
+                if(Math.abs(x) < 5 && Math.abs(z) < 5) x += 10;
+                createObstacle(x, h/2, z, w, h, d, boxMat);
+            }
+        }
+
+        function createObstacle(x, y, z, w, h, d, material) {
+            const geo = new THREE.BoxGeometry(w, h, d);
+            const mesh = new THREE.Mesh(geo, material);
+            mesh.position.set(x, y, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            scene.add(mesh);
+            
+            // For collision
+            const box = new THREE.Box3().setFromObject(mesh);
+            obstacles.push(box);
+        }
+
+        function setupPlayer() {
+            // Invisible body for collision reference
+            scene.add(controls.getObject());
+        }
+
+        function setupWeapon() {
+            const gunGroup = new THREE.Group();
+            
+            // Gun mesh
+            const gunGeo = new THREE.BoxGeometry(0.1, 0.15, 0.6);
+            const gunMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+            weaponMesh = new THREE.Mesh(gunGeo, gunMat);
+            weaponMesh.position.set(0.3, -0.2, -0.5); // Bottom right of screen
+            weaponMesh.castShadow = true;
+            gunGroup.add(weaponMesh);
+
+            // Muzzle flash light
+            muzzleFlash = new THREE.PointLight(0xffaa00, 0, 5);
+            muzzleFlash.position.set(0.3, -0.15, -0.85);
+            gunGroup.add(muzzleFlash);
+
+            camera.add(gunGroup);
+        }
+
+        // --- ENEMY SYSTEM ---
+        function spawnEnemy() {
+            const geo = new THREE.BoxGeometry(1.5, 2.5, 1.5);
+            const mat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+            const mesh = new THREE.Mesh(geo, mat);
+            
+            // Random edge spawn
+            let angle = Math.random() * Math.PI * 2;
+            let radius = (config.mapSize / 2) - 5;
+            mesh.position.set(Math.cos(angle) * radius, 1.25, Math.sin(angle) * radius);
+            mesh.castShadow = true;
+            
+            scene.add(mesh);
+            enemies.push({
+                mesh: mesh,
+                hp: 100,
+                lastAttackTime: 0
+            });
+        }
+
+        // --- INPUT & MECHANICS ---
+        function onKeyDown(e) {
+            switch(e.code) {
+                case 'KeyW': keys.w = true; break;
+                case 'KeyA': keys.a = true; break;
+                case 'KeyS': keys.s = true; break;
+                case 'KeyD': keys.d = true; break;
+                case 'Space': 
+                    if(state.canJump) {
+                        state.velocity.y = config.jumpForce;
+                        state.canJump = false;
+                    }
+                    break;
+                case 'ShiftLeft': keys.shift = true; break;
+                case 'KeyR': reloadWeapon(); break;
+            }
+        }
+
+        function onKeyUp(e) {
+            switch(e.code) {
+                case 'KeyW': keys.w = false; break;
+                case 'KeyA': keys.a = false; break;
+                case 'KeyS': keys.s = false; break;
+                case 'KeyD': keys.d = false; break;
+                case 'ShiftLeft': keys.shift = false; break;
+            }
+        }
+
+        function onMouseDown(e) {
+            if (e.button === 0 && controls.isLocked && !state.isDead) shoot();
+        }
+
+        function shoot() {
+            if (state.isReloading || state.ammo <= 0) return;
+            const now = clock.getElapsedTime();
+            if (now - state.lastFireTime < config.fireRate) return;
+
+            // Fire logic
+            state.ammo--;
+            state.lastFireTime = now;
+            updateUI();
+
+            // Muzzle flash & recoil
+            muzzleFlash.intensity = 5;
+            recoilTarget = 0.05; // Kick camera up
+            weaponMesh.position.z = -0.4; // Kick weapon back
+
+            // Raycast for Hit Detection
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera); // Center of screen
+            
+            const enemyMeshes = enemies.map(e => e.mesh);
+            const intersects = raycaster.intersectObjects(enemyMeshes);
+
+            if (intersects.length > 0) {
+                const hitMesh = intersects[0].object;
+                const enemyObj = enemies.find(e => e.mesh === hitMesh);
+                if (enemyObj) {
+                    enemyObj.hp -= 35; // 3 shots to kill
+                    // Hit visual feedback (flash white)
+                    hitMesh.material.color.setHex(0xffffff);
+                    setTimeout(() => { if(enemyObj.hp > 0) hitMesh.material.color.setHex(0xff0000); }, 50);
+
+                    if (enemyObj.hp <= 0) {
+                        scene.remove(hitMesh);
+                        enemies.splice(enemies.indexOf(enemyObj), 1);
+                        state.score += 10;
+                        updateUI();
+                        // Spawn 2 new enemies for every kill to increase difficulty
+                        spawnEnemy();
+                        if(Math.random() > 0.5) spawnEnemy(); 
+                    }
+                }
+            }
+        }
+
+        function reloadWeapon() {
+            if (state.isReloading || state.ammo === config.maxAmmo || state.isDead) return;
+            state.isReloading = true;
+            uiReloadText.style.display = 'inline';
+            
+            // Simple gun drop animation for reload
+            weaponMesh.position.y = -0.5; 
+
+            setTimeout(() => {
+                if(state.isDead) return;
+                state.ammo = config.maxAmmo;
+                state.isReloading = false;
+                uiReloadText.style.display = 'none';
+                weaponMesh.position.y = -0.2; // Return weapon
+                updateUI();
+            }, config.reloadTime * 1000);
+        }
+
+        function takeDamage(amount) {
+            if (state.isDead) return;
+            state.hp -= amount;
+            
+            // Flash screen red
+            uiDamageOverlay.style.opacity = 1;
+            setTimeout(() => uiDamageOverlay.style.opacity = 0, 150);
+
+            if (state.hp <= 0) {
+                state.hp = 0;
+                state.isDead = true;
+                controls.unlock();
+                uiGameOver.style.display = 'block';
+                blocker.style.display = 'flex';
+                document.getElementById('instructions').innerHTML = `Final Score: ${state.score}<br>Press F5 to Restart`;
+                playBtn.style.display = 'none';
+            }
+            updateUI();
+        }
+
+        function updateUI() {
+            uiHpText.innerText = state.hp;
+            uiHpBar.style.width = (state.hp / config.maxHp * 100) + '%';
+            uiAmmoText.innerText = `${state.ammo} / ${config.maxAmmo}`;
+            uiScoreVal.innerText = state.score;
+            
+            if(state.ammo === 0 && !state.isReloading) uiAmmoText.style.color = "red";
+            else uiAmmoText.style.color = "#00ff00";
+        }
+
+        // --- COLLISION LOGIC ---
+        function checkCollision(pos) {
+            // Create a small bounding box for player
+            const size = 0.8;
+            const playerBox = new THREE.Box3(
+                new THREE.Vector3(pos.x - size/2, pos.y - config.playerHeight + 0.1, pos.z - size/2),
+                new THREE.Vector3(pos.x + size/2, pos.y + 0.5, pos.z + size/2)
+            );
+
+            // Wall/Obstacle bounds check
+            if (Math.abs(pos.x) > config.mapSize/2 - 1) return true;
+            if (Math.abs(pos.z) > config.mapSize/2 - 1) return true;
+
+            for (let obs of obstacles) {
+                if (playerBox.intersectsBox(obs)) return true;
+            }
+            return false;
+        }
+
+        // --- MAIN LOOP ---
+        function updatePlayer(dt) {
+            if (state.isDead) return;
+
+            // Apply friction
+            state.velocity.x -= state.velocity.x * 10.0 * dt;
+            state.velocity.z -= state.velocity.z * 10.0 * dt;
+
+            // Calculate movement vector based on camera direction
+            const camDir = new THREE.Vector3();
+            camera.getWorldDirection(camDir);
+            camDir.y = 0; 
+            camDir.normalize();
+            
+            const camRight = new THREE.Vector3().crossVectors(camera.up, camDir).normalize();
+            const moveVec = new THREE.Vector3();
+
+            if (keys.w) moveVec.add(camDir);
+            if (keys.s) moveVec.sub(camDir);
+            if (keys.a) moveVec.sub(camRight);
+            if (keys.d) moveVec.add(camRight);
+            moveVec.normalize();
+
+            const speed = keys.shift ? config.playerSpeedSprint : config.playerSpeedWalk;
+            
+            if (moveVec.lengthSq() > 0) {
+                state.velocity.x += moveVec.x * speed * 50 * dt;
+                state.velocity.z += moveVec.z * speed * 50 * dt;
+            }
+
+            // Apply Gravity
+            state.velocity.y -= config.gravity * dt;
+
+            // Collision resolution (Move axis independently to allow sliding on walls)
+            const currentPos = controls.getObject().position.clone();
+            
+            // X axis
+            currentPos.x += state.velocity.x * dt;
+            if (checkCollision(currentPos)) {
+                currentPos.x -= state.velocity.x * dt;
+                state.velocity.x = 0;
+            }
+            
+            // Z axis
+            currentPos.z += state.velocity.z * dt;
+            if (checkCollision(currentPos)) {
+                currentPos.z -= state.velocity.z * dt;
+                state.velocity.z = 0;
+            }
+
+            // Y axis (Gravity & Floor)
+            currentPos.y += state.velocity.y * dt;
+            if (currentPos.y < config.playerHeight) {
+                state.velocity.y = 0;
+                currentPos.y = config.playerHeight;
+                state.canJump = true;
+            }
+
+            controls.getObject().position.copy(currentPos);
+
+            // Weapon bobbing effect while walking
+            if(moveVec.lengthSq() > 0 && state.canJump) {
+                const time = clock.getElapsedTime();
+                weaponMesh.position.y = -0.2 + Math.sin(time * (keys.shift ? 15 : 10)) * 0.02;
+            } else {
+                weaponMesh.position.y = THREE.MathUtils.lerp(weaponMesh.position.y, state.isReloading ? -0.5 : -0.2, 0.1);
+            }
+        }
+
+        function updateWeaponVisuals() {
+            // Muzzle flash decay
+            if(muzzleFlash.intensity > 0) muzzleFlash.intensity -= 0.5;
+            
+            // Weapon kickback recovery
+            weaponMesh.position.z = THREE.MathUtils.lerp(weaponMesh.position.z, -0.5, 0.1);
+
+            // Camera recoil effect
+            if (recoilTarget > 0) {
+                camera.rotation.x += recoilTarget;
+                currentRecoil += recoilTarget;
+                recoilTarget = 0;
+            }
+            // Smoothly recover from recoil
+            if (currentRecoil > 0) {
+                const recovery = Math.min(currentRecoil, 0.005);
+                camera.rotation.x -= recovery;
+                currentRecoil -= recovery;
+            }
+        }
+
+        function updateEnemies(dt, now) {
+            const playerPos = controls.getObject().position;
+
+            enemies.forEach(enemy => {
+                // Look at player
+                enemy.mesh.lookAt(playerPos.x, enemy.mesh.position.y, playerPos.z);
+                
+                const dist = enemy.mesh.position.distanceTo(playerPos);
+                
+                // Move towards player if far, attack if close
+                if (dist > 1.8) {
+                    const dir = new THREE.Vector3().subVectors(playerPos, enemy.mesh.position);
+                    dir.y = 0;
+                    dir.normalize();
+                    enemy.mesh.position.addScaledVector(dir, config.enemySpeed * dt);
+                } else if (!state.isDead) {
+                    // Attack Player
+                    if (now - enemy.lastAttackTime > config.enemyAttackCooldown) {
+                        takeDamage(config.enemyDamage);
+                        enemy.lastAttackTime = now;
+                    }
+                }
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const dt = Math.min(clock.getDelta(), 0.1); // cap dt
+            const now = clock.getElapsedTime();
+
+            if (controls.isLocked) {
+                updatePlayer(dt);
+                updateWeaponVisuals();
+                updateEnemies(dt, now);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Start game logic
+        init();
+    </script>
 </body>
 </html>
